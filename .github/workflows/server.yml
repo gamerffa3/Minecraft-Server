@@ -1,9 +1,22 @@
-name: Paper Server
+name: Advanced Paper Server
 
 on:
   push:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      reset_data:
+        description: 'Reset all data (world, plugins, config)'
+        type: boolean
+        default: false
+      server_mode:
+        description: 'Server mode'
+        type: choice
+        options:
+          - survival
+          - creative
+          - adventure
+        default: survival
 
 jobs:
   server:
@@ -20,9 +33,21 @@ jobs:
           java-version: '21'
       
       # ============================================
+      # 🗑️ RESET DATA (if requested)
+      # ============================================
+      - name: Reset Data
+        if: github.event.inputs.reset_data == 'true'
+        run: |
+          echo "🗑️ Resetting all server data..."
+          rm -rf server/
+          rm -rf backups/
+          echo "✅ Data reset complete!"
+      
+      # ============================================
       # 📥 DOWNLOAD LATEST BACKUP
       # ============================================
       - name: Download Latest Backup
+        if: github.event.inputs.reset_data != 'true'
         uses: actions/download-artifact@v4
         with:
           name: minecraft-backup
@@ -63,15 +88,24 @@ jobs:
           # Accept EULA
           echo "eula=true" > eula.txt
           
+          # Set gamemode based on input
+          if [ "${{ github.event.inputs.server_mode }}" == "creative" ]; then
+            GM=1
+          elif [ "${{ github.event.inputs.server_mode }}" == "adventure" ]; then
+            GM=2
+          else
+            GM=0
+          fi
+          
           # Complete server.properties
-          cat > server.properties << 'EOF'
+          cat > server.properties << EOF
           # Minecraft server properties
           server-port=25565
-          max-players=20
-          view-distance=10
-          simulation-distance=6
-          gamemode=0
-          difficulty=2
+          max-players=50
+          view-distance=12
+          simulation-distance=8
+          gamemode=$GM
+          difficulty=3
           spawn-protection=16
           online-mode=false
           force-gamemode=false
@@ -80,9 +114,11 @@ jobs:
           allow-end=true
           level-name=world
           level-type=default
-          motd=Welcome to Paper Server! 🚀
+          motd=Welcome to Advanced Paper Server!
           enable-query=true
-          enable-rcon=false
+          enable-rcon=true
+          rcon-password=${{ secrets.RCON_PASSWORD }}
+          rcon-port=25575
           max-tick-time=60000
           network-compression-threshold=256
           EOF
@@ -93,8 +129,8 @@ jobs:
           echo "========================================="
           echo "📦 SERVER SETUP COMPLETE"
           echo "========================================="
+          echo "🎮 Gamemode: ${{ github.event.inputs.server_mode }}"
           echo "📂 Plugins: $(ls plugins/ | wc -l) files"
-          echo "📂 Folders: plugins, world, logs, config"
           echo "========================================="
       
       # ============================================
@@ -104,19 +140,29 @@ jobs:
         run: |
           cd server
           
-          # Start Playit agent with secret (if available)
+          # Start Playit agent
           if [ -n "${{ secrets.PLAYIT_SECRET }}" ]; then
-            echo "🚀 Starting Playit agent with secret..."
+            echo "🚀 Starting Playit agent..."
             ./playit-agent --secret ${{ secrets.PLAYIT_SECRET }} &
           else
-            echo "🚀 Starting Playit agent without secret (claim required)..."
+            echo "🚀 Starting Playit agent (claim required)..."
             ./playit-agent &
           fi
           
           sleep 5
           
+          # Health check thread
+          (
+            while true; do
+              sleep 300  # Check every 5 minutes
+              echo "💚 Server health check: $(date)"
+              echo "📊 Memory: $(free -h | grep Mem | awk '{print $3 "/" $2}')"
+              echo "📊 CPU: $(top -bn1 | grep "Cpu(s)" | awk '{print $2 "%"}')"
+            done
+          ) &
+          
           # Start Paper server
-          echo "🚀 Starting Paper server with 8GB RAM..."
+          echo "🚀 Starting Paper server..."
           java -Djava.net.preferIPv4Stack=true -Xmx8G -Xms4G -jar paper-1.21.4-72.jar nogui
       
       # ============================================
@@ -130,20 +176,17 @@ jobs:
           
           mkdir -p backups
           
-          # Zip server folder (exclude .jar, .log, .gz)
           cd server
           zip -r "../backups/$BACKUP_NAME.zip" . -x "*.jar" "*.log" "*.gz" 2>/dev/null || true
           cd ..
           
-          # Update latest backup
           cp "backups/$BACKUP_NAME.zip" "backups/latest.zip"
           
           echo "✅ Backup created: $BACKUP_NAME.zip"
           echo "📂 Backup size: $(du -h backups/$BACKUP_NAME.zip | cut -f1)"
-          echo "📂 Latest backup: $(du -h backups/latest.zip | cut -f1)"
       
       # ============================================
-      # 📤 UPLOAD ALL BACKUPS
+      # 📤 UPLOAD BACKUPS
       # ============================================
       - name: Upload Latest Backup
         if: always()
@@ -153,10 +196,24 @@ jobs:
           path: backups/latest.zip
           retention-days: 90
       
-      - name: Upload All Backups (History)
+      - name: Upload All Backups
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: minecraft-all-backups-$(date +'%Y-%m-%d')
+          name: minecraft-backups-$(date +'%Y-%m-%d')
           path: backups/
           retention-days: 30
+      
+      # ============================================
+      # 📊 SERVER STATS
+      # ============================================
+      - name: Server Stats
+        if: always()
+        run: |
+          echo "========================================="
+          echo "📊 SERVER STATS"
+          echo "========================================="
+          echo "📁 Server folder size: $(du -sh server/ | cut -f1)"
+          echo "📁 Backups size: $(du -sh backups/ | cut -f1)"
+          echo "📂 Total plugins: $(ls -1 server/plugins/ 2>/dev/null | wc -l)"
+          echo "========================================="
