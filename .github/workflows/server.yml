@@ -104,9 +104,15 @@ jobs:
         run: |
           cd server
           
-          # Start Playit agent in background
-          echo "🚀 Starting Playit agent..."
-          ./playit-agent &
+          # Start Playit agent with secret (if available)
+          if [ -n "${{ secrets.PLAYIT_SECRET }}" ]; then
+            echo "🚀 Starting Playit agent with secret..."
+            ./playit-agent --secret ${{ secrets.PLAYIT_SECRET }} &
+          else
+            echo "🚀 Starting Playit agent without secret (claim required)..."
+            ./playit-agent &
+          fi
+          
           sleep 5
           
           # Start Paper server
