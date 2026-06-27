@@ -8,6 +8,7 @@ on:
 jobs:
   server:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     
     steps:
       - uses: actions/checkout@v4
@@ -18,13 +19,16 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
       
-      - name: Run Paper Server
-        uses: gmitch215/TestMC@v2
-        with:
-          runtime: 'paper'
-          version: '1.21.1'
-          time: 3600  # 1 hour
-          flags: '-Xmx8G -Xms4G'  # 8GB RAM allocate
-          commands: |
-            version
-            plugins
+      - name: Download and Run Paper
+        run: |
+          mkdir server
+          cd server
+          
+          # Paper 1.21.1 download
+          wget https://api.papermc.io/v2/projects/paper/versions/1.21.1/builds/latest/downloads/paper-1.21.1-latest.jar
+          
+          # eula accept
+          echo "eula=true" > eula.txt
+          
+          # Run server
+          java -Xmx8G -Xms4G -jar paper-1.21.1-latest.jar nogui
