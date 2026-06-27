@@ -30,21 +30,31 @@ jobs:
         continue-on-error: true
       
       # ============================================
-      # 🛠️ SETUP SERVER
+      # 🛠️ COMPLETE SERVER SETUP
       # ============================================
-      - name: Setup Server
+      - name: Complete Server Setup
         run: |
           mkdir -p server
           cd server
           
-          # Create plugins folder
+          # Create all folders
           mkdir -p plugins
+          mkdir -p world
+          mkdir -p world_nether
+          mkdir -p world_the_end
+          mkdir -p logs
+          mkdir -p config
           
           # Copy uploaded plugins
           echo "📦 Copying plugins..."
           cp ../*.jar plugins/ 2>/dev/null || true
           
-          # Download Paper if not exists
+          # Download Playit Agent
+          echo "📥 Downloading Playit Agent..."
+          wget -q https://playit.gg/download/playit-linux-amd64 -O playit-agent
+          chmod +x playit-agent
+          
+          # Download Paper
           if [ ! -f "paper-1.21.4-72.jar" ]; then
             echo "📥 Downloading Paper..."
             wget -q https://api.papermc.io/v2/projects/paper/versions/1.21.4/builds/72/downloads/paper-1.21.4-72.jar
@@ -53,7 +63,7 @@ jobs:
           # Accept EULA
           echo "eula=true" > eula.txt
           
-          # Create server.properties
+          # Complete server.properties
           cat > server.properties << 'EOF'
           # Minecraft server properties
           server-port=25565
@@ -70,7 +80,7 @@ jobs:
           allow-end=true
           level-name=world
           level-type=default
-          motd=Welcome to Paper Server!
+          motd=Welcome to Paper Server! 🚀
           enable-query=true
           enable-rcon=false
           max-tick-time=60000
@@ -81,47 +91,55 @@ jobs:
           echo "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAI0lEQVR4nO3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAAG4NFeAAAW2v83YAAAAASUVORK5CYII=" | base64 -d > server-icon.png
           
           echo "========================================="
-          echo "📦 PLUGINS LOADED:"
-          ls -la plugins/ 2>/dev/null || echo "No plugins found"
+          echo "📦 SERVER SETUP COMPLETE"
+          echo "========================================="
+          echo "📂 Plugins: $(ls plugins/ | wc -l) files"
+          echo "📂 Folders: plugins, world, logs, config"
           echo "========================================="
       
       # ============================================
-      # 🚀 RUN SERVER
+      # 🚀 RUN PLAYIT AGENT + SERVER
       # ============================================
-      - name: Run Paper Server
+      - name: Run Server
         run: |
           cd server
-          echo "🚀 Starting Paper server..."
+          
+          # Start Playit agent in background
+          echo "🚀 Starting Playit agent..."
+          ./playit-agent &
+          sleep 5
+          
+          # Start Paper server
+          echo "🚀 Starting Paper server with 8GB RAM..."
           java -Djava.net.preferIPv4Stack=true -Xmx8G -Xms4G -jar paper-1.21.4-72.jar nogui
       
       # ============================================
-      # 💾 CREATE BACKUP WITH DATE & TIME
+      # 💾 AUTO BACKUP WITH DATE-TIME
       # ============================================
-      - name: Create Backup
+      - name: Auto Backup
         if: always()
         run: |
-          # Get current date and time
           BACKUP_NAME="backup-$(date +'%Y-%m-%d_%H-%M-%S')"
           echo "📦 Creating backup: $BACKUP_NAME"
           
-          # Create backup directory
           mkdir -p backups
           
-          # Zip the server folder
+          # Zip server folder (exclude .jar, .log, .gz)
           cd server
           zip -r "../backups/$BACKUP_NAME.zip" . -x "*.jar" "*.log" "*.gz" 2>/dev/null || true
           cd ..
           
-          # Create a latest symlink (for easy restore)
+          # Update latest backup
           cp "backups/$BACKUP_NAME.zip" "backups/latest.zip"
           
           echo "✅ Backup created: $BACKUP_NAME.zip"
           echo "📂 Backup size: $(du -h backups/$BACKUP_NAME.zip | cut -f1)"
+          echo "📂 Latest backup: $(du -h backups/latest.zip | cut -f1)"
       
       # ============================================
-      # 📤 UPLOAD BACKUP
+      # 📤 UPLOAD ALL BACKUPS
       # ============================================
-      - name: Upload Backup
+      - name: Upload Latest Backup
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -129,13 +147,10 @@ jobs:
           path: backups/latest.zip
           retention-days: 90
       
-      # ============================================
-      # 📤 UPLOAD ALL BACKUPS (Optional)
-      # ============================================
-      - name: Upload All Backups
+      - name: Upload All Backups (History)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: minecraft-all-backups
+          name: minecraft-all-backups-$(date +'%Y-%m-%d')
           path: backups/
           retention-days: 30
