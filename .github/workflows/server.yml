@@ -26,7 +26,7 @@ jobs:
           path: server/
         continue-on-error: true
       
-      - name: Setup Server with Plugins
+      - name: Setup Complete Server
         run: |
           mkdir -p server
           cd server
@@ -34,22 +34,15 @@ jobs:
           # Create plugins folder
           mkdir -p plugins
           
-          # ========================================
-          # 📦 COPY UPLOADED PLUGINS
-          # ========================================
-          echo "📦 Copying plugins from repository..."
+          # Copy uploaded plugins
+          echo "📦 Copying plugins..."
           cp ../*.jar plugins/ 2>/dev/null || true
           
-          # ========================================
-          # 📥 DOWNLOAD PAPER
-          # ========================================
+          # Download Paper if not exists
           if [ ! -f "paper-1.21.4-72.jar" ]; then
-            wget https://api.papermc.io/v2/projects/paper/versions/1.21.4/builds/72/downloads/paper-1.21.4-72.jar
+            echo "📥 Downloading Paper..."
+            wget -q https://api.papermc.io/v2/projects/paper/versions/1.21.4/builds/72/downloads/paper-1.21.4-72.jar
           fi
-          
-          # ========================================
-          # ⚙️ SERVER CONFIGURATION
-          # ========================================
           
           # Accept EULA
           echo "eula=true" > eula.txt
@@ -61,53 +54,38 @@ jobs:
           max-players=20
           view-distance=10
           simulation-distance=6
-          
-          # GAMEMODE = SURVIVAL (0)
           gamemode=0
           difficulty=2
           spawn-protection=16
-          
-          # PLAYER SETTINGS
           online-mode=false
           force-gamemode=false
           allow-flight=true
           allow-nether=true
           allow-end=true
-          
-          # WORLD SETTINGS
           level-name=world
           level-type=default
-          
-          # OTHER
-          motd=Welcome to Paper Server! 🚀
+          motd=Welcome to Paper Server!
           enable-query=true
           enable-rcon=false
           max-tick-time=60000
           network-compression-threshold=256
           EOF
           
-          # ========================================
-          # 📋 LIST PLUGINS
-          # ========================================
+          # Create server-icon.png to avoid icon error
+          echo "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAI0lEQVR4nO3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAAG4NFeAAAW2v83YAAAAASUVORK5CYII=" | base64 -d > server-icon.png
+          
           echo "========================================="
           echo "📦 PLUGINS LOADED:"
-          ls -la plugins/
+          ls -la plugins/ 2>/dev/null || echo "No plugins found"
           echo "========================================="
       
-      - name: Run Paper Server with Playit.gg Tunnel
+      - name: Run Paper Server
         run: |
           cd server
           
-          # Start Playit.gg tunnel in background
-          echo "🚀 Starting Playit.gg tunnel..."
-          ./playit-linux-amd64 --secret ${{ secrets.PLAYIT_SECRET }} &
-          
-          # Wait for tunnel to start
-          sleep 5
-          
-          # Start Paper server
-          echo "🚀 Starting Paper server..."
-          java -Xmx8G -Xms4G -jar paper-1.21.4-72.jar nogui
+          # Force IPv4 to avoid network errors
+          echo "🚀 Starting Paper server with IPv4..."
+          java -Djava.net.preferIPv4Stack=true -Xmx8G -Xms4G -jar paper-1.21.4-72.jar nogui
       
       - name: Upload Server Data
         if: always()
