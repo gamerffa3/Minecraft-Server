@@ -19,23 +19,96 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
       
-      - name: Download and Run Paper
+      - name: Create Complete Server Structure
         run: |
-          mkdir server
+          # Main server folder
+          mkdir -p server
           cd server
           
+          # Create plugins folder
+          mkdir -p plugins
+          
+          # Create worlds folder
+          mkdir -p world
+          mkdir -p world_nether
+          mkdir -p world_the_end
+          
+          # Create logs folder
+          mkdir -p logs
+          
+          # Create config folder
+          mkdir -p config
+          
+          # Create a .gitkeep file to preserve folders
+          touch plugins/.gitkeep
+          touch world/.gitkeep
+          touch logs/.gitkeep
+          touch config/.gitkeep
+          
+          # Download Paper
           wget https://api.papermc.io/v2/projects/paper/versions/1.21.4/builds/72/downloads/paper-1.21.4-72.jar
           
+          # Create server.properties
+          cat > server.properties << 'EOF'
+          # Minecraft server properties
+          # Paper 1.21.4
+          server-port=25565
+          online-mode=false
+          max-players=20
+          view-distance=10
+          simulation-distance=6
+          motd=Welcome to Paper Server!
+          EOF
+          
+          # Accept EULA
           echo "eula=true" > eula.txt
           
-          echo "server-port=25565" > server.properties
-          echo "online-mode=false" >> server.properties
-          echo "max-players=10" >> server.properties
-          echo "view-distance=10" >> server.properties
+          # Create a simple server icon
+          echo "Server icon placeholder" > server-icon.png
           
+          # Create plugins folder with a sample plugin
+          cd plugins
+          # Download EssentialsX
+          wget -q https://github.com/EssentialsX/Essentials/releases/download/2.20.1/EssentialsX-2.20.1.jar || true
+          # Download WorldEdit
+          wget -q https://dev.bukkit.org/projects/worldedit/files/latest -O WorldEdit.jar || true
+          cd ..
+          
+          # Create a README file
+          cat > README.md << 'EOF'
+          # Minecraft Paper Server
+          
+          ## Server Info
+          - Version: 1.21.4
+          - Port: 25565
+          - Max Players: 20
+          
+          ## Plugins
+          - EssentialsX
+          - WorldEdit
+          
+          ## How to Connect
+          1. Get the public IP from the workflow logs
+          2. Add server to Minecraft client
+          3. Join and play!
+          EOF
+          
+          # List all created files
+          echo "========================================="
+          echo "✅ SERVER STRUCTURE CREATED!"
+          echo "========================================="
+          ls -la
+          echo ""
+          echo "📂 Plugins folder:"
+          ls -la plugins/
+          echo "========================================="
+      
+      - name: Run Paper Server
+        run: |
+          cd server
           java -Xmx8G -Xms4G -jar paper-1.21.4-72.jar nogui
       
-      - name: Upload Server Data
+      - name: Upload Complete Server Data
         if: always()
         uses: actions/upload-artifact@v4
         with:
