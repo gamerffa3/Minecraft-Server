@@ -1,0 +1,30 @@
+name: Paper Server
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      
+      - name: Run Paper Server
+        uses: gmitch215/TestMC@v2
+        with:
+          runtime: 'paper'
+          version: '1.21.1'
+          time: 3600  # 1 hour
+          flags: '-Xmx8G -Xms4G'  # 8GB RAM allocate
+          commands: |
+            version
+            plugins
