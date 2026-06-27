@@ -19,99 +19,100 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
       
-      - name: Create Complete Server Structure
+      - name: Download Previous Server Data
+        uses: actions/download-artifact@v4
+        with:
+          name: minecraft-server-data
+          path: server/
+        continue-on-error: true
+      
+      - name: Setup Server with Plugins
         run: |
-          # Main server folder
           mkdir -p server
           cd server
           
           # Create plugins folder
           mkdir -p plugins
           
-          # Create worlds folder
-          mkdir -p world
-          mkdir -p world_nether
-          mkdir -p world_the_end
+          # ========================================
+          # 📦 COPY UPLOADED PLUGINS
+          # ========================================
+          echo "📦 Copying plugins from repository..."
+          cp ../*.jar plugins/ 2>/dev/null || true
           
-          # Create logs folder
-          mkdir -p logs
+          # ========================================
+          # 📥 DOWNLOAD PAPER
+          # ========================================
+          if [ ! -f "paper-1.21.4-72.jar" ]; then
+            wget https://api.papermc.io/v2/projects/paper/versions/1.21.4/builds/72/downloads/paper-1.21.4-72.jar
+          fi
           
-          # Create config folder
-          mkdir -p config
-          
-          # Create a .gitkeep file to preserve folders
-          touch plugins/.gitkeep
-          touch world/.gitkeep
-          touch logs/.gitkeep
-          touch config/.gitkeep
-          
-          # Download Paper
-          wget https://api.papermc.io/v2/projects/paper/versions/1.21.4/builds/72/downloads/paper-1.21.4-72.jar
-          
-          # Create server.properties
-          cat > server.properties << 'EOF'
-          # Minecraft server properties
-          # Paper 1.21.4
-          server-port=25565
-          online-mode=false
-          max-players=20
-          view-distance=10
-          simulation-distance=6
-          motd=Welcome to Paper Server!
-          EOF
+          # ========================================
+          # ⚙️ SERVER CONFIGURATION
+          # ========================================
           
           # Accept EULA
           echo "eula=true" > eula.txt
           
-          # Create a simple server icon
-          echo "Server icon placeholder" > server-icon.png
+          # Create server.properties
+          cat > server.properties << 'EOF'
+          # Minecraft server properties
+          server-port=25565
+          max-players=20
+          view-distance=10
+          simulation-distance=6
           
-          # Create plugins folder with a sample plugin
-          cd plugins
-          # Download EssentialsX
-          wget -q https://github.com/EssentialsX/Essentials/releases/download/2.20.1/EssentialsX-2.20.1.jar || true
-          # Download WorldEdit
-          wget -q https://dev.bukkit.org/projects/worldedit/files/latest -O WorldEdit.jar || true
-          cd ..
+          # GAMEMODE = SURVIVAL (0)
+          gamemode=0
+          difficulty=2
+          spawn-protection=16
           
-          # Create a README file
-          cat > README.md << 'EOF'
-          # Minecraft Paper Server
+          # PLAYER SETTINGS
+          online-mode=false
+          force-gamemode=false
+          allow-flight=true
+          allow-nether=true
+          allow-end=true
           
-          ## Server Info
-          - Version: 1.21.4
-          - Port: 25565
-          - Max Players: 20
+          # WORLD SETTINGS
+          level-name=world
+          level-type=default
           
-          ## Plugins
-          - EssentialsX
-          - WorldEdit
-          
-          ## How to Connect
-          1. Get the public IP from the workflow logs
-          2. Add server to Minecraft client
-          3. Join and play!
+          # OTHER
+          motd=Welcome to Paper Server! 🚀
+          enable-query=true
+          enable-rcon=false
+          max-tick-time=60000
+          network-compression-threshold=256
           EOF
           
-          # List all created files
+          # ========================================
+          # 📋 LIST PLUGINS
+          # ========================================
           echo "========================================="
-          echo "✅ SERVER STRUCTURE CREATED!"
-          echo "========================================="
-          ls -la
-          echo ""
-          echo "📂 Plugins folder:"
+          echo "📦 PLUGINS LOADED:"
           ls -la plugins/
           echo "========================================="
       
-      - name: Run Paper Server
+      - name: Run Paper Server with Playit.gg Tunnel
         run: |
           cd server
+          
+          # Start Playit.gg tunnel in background
+          echo "🚀 Starting Playit.gg tunnel..."
+          ./playit-linux-amd64 --secret ${{ secrets.PLAYIT_SECRET }} &
+          
+          # Wait for tunnel to start
+          sleep 5
+          
+          # Start Paper server
+          echo "🚀 Starting Paper server..."
           java -Xmx8G -Xms4G -jar paper-1.21.4-72.jar nogui
       
-      - name: Upload Complete Server Data
+      - name: Upload Server Data
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: minecraft-server-data
           path: server/
-          retention-days: 30
+          retention-days: 90
