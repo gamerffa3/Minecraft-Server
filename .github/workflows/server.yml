@@ -19,22 +19,47 @@ jobs:
           distribution: 'temurin'
           java-version: '21'
       
+      - name: Download Previous Server Data
+        uses: actions/download-artifact@v4
+        with:
+          name: minecraft-server-data
+          path: server/
+        continue-on-error: true
+      
       - name: Download and Run Paper
         run: |
-          mkdir server
+          # Agar folder nahi hai toh create karo
+          if [ ! -d "server" ]; then
+            mkdir server
+          fi
+          
           cd server
           
-          # Download Paper 1.21.4 build #72
-          wget https://api.papermc.io/v2/projects/paper/versions/1.21.4/builds/72/downloads/paper-1.21.4-72.jar
+          # Agar jar file nahi hai toh download karo
+          if [ ! -f "paper-1.21.4-72.jar" ]; then
+            wget https://api.papermc.io/v2/projects/paper/versions/1.21.4/builds/72/downloads/paper-1.21.4-72.jar
+          fi
           
-          # Accept EULA
-          echo "eula=true" > eula.txt
+          # Accept EULA (agar nahi hai toh)
+          if [ ! -f "eula.txt" ]; then
+            echo "eula=true" > eula.txt
+          fi
           
-          # Create server properties
-          echo "server-port=25565" > server.properties
-          echo "online-mode=false" >> server.properties
-          echo "max-players=10" >> server.properties
-          echo "view-distance=10" >> server.properties
+          # Create server properties (agar nahi hai toh)
+          if [ ! -f "server.properties" ]; then
+            echo "server-port=25565" > server.properties
+            echo "online-mode=false" >> server.properties
+            echo "max-players=10" >> server.properties
+            echo "view-distance=10" >> server.properties
+          fi
           
           # Run server with 8GB RAM
           java -Xmx8G -Xms4G -jar paper-1.21.4-72.jar nogui
+      
+      - name: Upload Server Data (Save World)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-server-data
+          path: server/
+          retention-days: 30
