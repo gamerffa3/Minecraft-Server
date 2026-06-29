@@ -17,10 +17,18 @@ on:
           - creative
           - adventure
         default: survival
-      backup_on_stop:
-        description: 'Create backup on stop'
-        type: boolean
-        default: true
+      tailscale_connect:
+        description: 'Connect to Tailscale?'
+        type: choice
+        options:
+          - 'yes'
+          - 'no'
+        default: 'yes'
+      tailscale_auth_key:
+        description: 'Tailscale Auth Key (tskey-auth-xxxxx)'
+        type: string
+        required: false
+        default: ''
 
 jobs:
   server:
@@ -37,20 +45,42 @@ jobs:
           java-version: '21'
       
       # ============================================
-      # 🔗 TAILSCALE SETUP
+      # 🔗 TAILSCALE SETUP WITH OPTION
       # ============================================
       - name: Setup Tailscale
+        if: github.event.inputs.tailscale_connect == 'yes'
         run: |
           echo "🔗 Installing Tailscale..."
           curl -fsSL https://tailscale.com/install.sh | sh
           
-          if [ -n "${{ secrets.TAILSCALE_AUTH_KEY }}" ]; then
-            echo "🔗 Connecting to Tailscale..."
-            sudo tailscale up --auth-key=${{ secrets.TAILSCALE_AUTH_KEY }} --accept-routes
-            TAILSCALE_IP=$(tailscale ip)
+          # Use provided auth key or try secrets
+          AUTH_KEY="${{ github.event.inputs.tailscale_auth_key }}"
+          if [ -z "$AUTH_KEY" ]; then
+            AUTH_KEY="${{ secrets.TAILSCALE_AUTH_KEY }}"
+          fi
+          
+          if [ -n "$AUTH_KEY" ]; then
+            echo "🔗 Connecting to Tailscale with auth key..."
+            sudo tailscale up --auth-key="$AUTH_KEY" --accept-routes --accept-dns
+            TAILSCALE_IP=$(tailscale ip 2>/dev/null || echo "Unknown")
             echo "✅ Tailscale connected! IP: $TAILSCALE_IP"
+            
+            # Save IP for later steps
+            echo "TAILSCALE_IP=$TAILSCALE_IP" >> $GITHUB_ENV
           else
-            echo "⚠️ TAILSCALE_AUTH_KEY not set. Skipping Tailscale setup."
+            echo "⚠️ No Tailscale auth key provided!"
+            echo ""
+            echo "========================================="
+            echo "🔗 HOW TO GET TAILSCALE AUTH KEY:"
+            echo "========================================="
+            echo "1. Go to: https://login.tailscale.com/admin/settings/keys"
+            echo "2. Click 'Generate auth key'"
+            echo "3. Copy the key (starts with 'tskey-auth-')"
+            echo "4. Add it as a GitHub Secret:"
+            echo "   Settings → Secrets → TAILSCALE_AUTH_KEY"
+            echo "========================================="
+            echo ""
+            exit 1
           fi
       
       # ============================================
@@ -96,10 +126,10 @@ jobs:
           echo "📦 Copying plugins..."
           cp ../*.jar plugins/ 2>/dev/null || true
           
-          # Download Playit Agent (optional - for public access)
+          # Download Playit Agent (optional)
           echo "📥 Downloading Playit Agent..."
-          wget -q https://playit.gg/download/playit-linux-amd64 -O playit-agent
-          chmod +x playit-agent
+          wget -q https://playit.gg/download/playit-linux-amd64 -O playit-agent || true
+          chmod +x playit-agent 2>/dev/null || true
           
           # Download Paper
           if [ ! -f "paper-1.21.4-72.jar" ]; then
@@ -110,7 +140,7 @@ jobs:
           # Accept EULA
           echo "eula=true" > eula.txt
           
-          # Set gamemode based on input
+          # Set gamemode
           if [ "${{ github.event.inputs.server_mode }}" == "creative" ]; then
             GM=1
           elif [ "${{ github.event.inputs.server_mode }}" == "adventure" ]; then
@@ -119,9 +149,10 @@ jobs:
             GM=0
           fi
           
-          # Complete server.properties with Tailscale IP
-          TAILSCALE_IP=$(tailscale ip 2>/dev/null || echo "localhost")
+          # Get Tailscale IP
+          TAILSCALE_IP="${TAILSCALE_IP:-localhost}"
           
+          # Complete server.properties
           cat > server.properties << EOF
           # Minecraft server properties
           server-port=25565
@@ -138,7 +169,7 @@ jobs:
           allow-end=true
           level-name=world
           level-type=default
-          motd=Welcome to Advanced Paper Server! | Tailscale: $TAILSCALE_IP
+          motd=Welcome to Advanced Paper Server! | 🔗 $TAILSCALE_IP
           enable-query=true
           enable-rcon=true
           rcon-password=${{ secrets.RCON_PASSWORD }}
@@ -149,6 +180,24 @@ jobs:
           
           # Create server-icon.png
           echo "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAI0lEQVR4nO3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAAG4NFeAAAW2v83YAAAAASUVORK5CYII=" | base64 -d > server-icon.png
+          
+          # Create connection info file
+          cat > CONNECTION_INFO.txt << EOF
+          =========================================
+          🎮 MINECRAFT SERVER CONNECTION INFO
+          =========================================
+          🌐 Server IP: $TAILSCALE_IP
+          🔌 Port: 25565
+          🎮 Mode: ${{ github.event.inputs.server_mode }}
+          📂 Plugins: $(ls plugins/ | wc -l)
+          =========================================
+          🔗 To connect:
+          1. Open Minecraft
+          2. Add Server
+          3. IP: $TAILSCALE_IP
+          4. Port: 25565
+          =========================================
+          EOF
           
           echo "========================================="
           echo "📦 SERVER SETUP COMPLETE"
@@ -165,42 +214,33 @@ jobs:
         run: |
           cd server
           
-          # Start Playit agent (if secret exists)
-          if [ -n "${{ secrets.PLAYIT_SECRET }}" ]; then
+          # Start Playit agent (if exists)
+          if [ -f "./playit-agent" ]; then
             echo "🚀 Starting Playit agent..."
-            ./playit-agent --secret ${{ secrets.PLAYIT_SECRET }} &
-          else
-            echo "🚀 Playit agent (claim required)..."
             ./playit-agent &
           fi
           
-          sleep 5
+          sleep 3
           
-          # Show Tailscale status
-          if command -v tailscale &> /dev/null; then
-            echo "🔗 Tailscale Status:"
-            tailscale status
-            echo "🔗 Tailscale IP: $(tailscale ip)"
-          fi
+          # Show connection info
+          cat CONNECTION_INFO.txt
           
           # Health check thread
           (
             while true; do
-              sleep 300  # Check every 5 minutes
+              sleep 300
               echo "💚 Server health check: $(date)"
               echo "📊 Memory: $(free -h | grep Mem | awk '{print $3 "/" $2}')"
               echo "📊 CPU: $(top -bn1 | grep "Cpu(s)" | awk '{print $2 "%"}')"
-              echo "🔗 Tailscale: $(tailscale status 2>/dev/null | head -1 || echo 'Not connected')"
             done
           ) &
           
           # Start Paper server
           echo "🚀 Starting Paper server..."
-          echo "🔗 Connect using Tailscale IP: $(tailscale ip 2>/dev/null || echo 'localhost'):25565"
           java -Djava.net.preferIPv4Stack=true -Xmx8G -Xms4G -jar paper-1.21.4-72.jar nogui
       
       # ============================================
-      # 💾 AUTO BACKUP WITH DATE-TIME
+      # 💾 AUTO BACKUP
       # ============================================
       - name: Auto Backup
         if: always()
@@ -214,42 +254,19 @@ jobs:
           zip -r "../backups/$BACKUP_NAME.zip" . -x "*.jar" "*.log" "*.gz" "*.tmp" "cache/*" 2>/dev/null || true
           cd ..
           
-          # Copy to latest
           cp "backups/$BACKUP_NAME.zip" "backups/latest.zip"
           
-          # Create metadata
-          BACKUP_SIZE=$(du -h backups/$BACKUP_NAME.zip | cut -f1)
-          WORLD_SIZE=$(du -sh server/world 2>/dev/null | cut -f1 || echo "0")
-          PLAYER_COUNT=$(ls server/world/playerdata 2>/dev/null | wc -l || echo "0")
-          
-          cat > backups/metadata.json << EOF
-          {
-            "backup_name": "$BACKUP_NAME",
-            "timestamp": "$(date -Iseconds)",
-            "backup_size": "$BACKUP_SIZE",
-            "world_size": "$WORLD_SIZE",
-            "player_count": $PLAYER_COUNT,
-            "server_mode": "${{ github.event.inputs.server_mode }}",
-            "tailscale_ip": "$(tailscale ip 2>/dev/null || echo 'localhost')"
-          }
-          EOF
-          
           echo "✅ Backup created: $BACKUP_NAME.zip"
-          echo "📂 Backup size: $BACKUP_SIZE"
-          echo "📊 Players: $PLAYER_COUNT"
-          echo "📊 World size: $WORLD_SIZE"
       
       # ============================================
-      # 📤 UPLOAD BACKUPS TO GITHUB
+      # 📤 UPLOAD BACKUPS
       # ============================================
       - name: Upload Latest Backup
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: minecraft-backup
-          path: |
-            backups/latest.zip
-            backups/metadata.json
+          path: backups/latest.zip
           retention-days: 90
       
       - name: Upload All Backups
@@ -261,28 +278,33 @@ jobs:
           retention-days: 30
       
       # ============================================
-      # 📤 UPLOAD TO BACKUP REPOSITORY
+      # 📤 PUSH TO BACKUP BRANCH (Fixed Permission)
       # ============================================
       - name: Push Backup to Repository
         if: always()
         run: |
           echo "📤 Pushing backups to repository..."
           
-          # Configure git
+          # Configure git with token
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
           
-          # Create backup branch
+          # Use GITHUB_TOKEN for authentication
+          git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
+          
+          # Create or switch to backups branch
           git checkout -b backups || git checkout backups
           
-          # Copy backups to repo
+          # Copy backups
           mkdir -p backup-repo
           cp -r backups/* backup-repo/ 2>/dev/null || true
           
-          # Push to backup branch
+          # Add and commit
           git add backup-repo/
-          git commit -m "Auto backup: $(date -Iseconds)" || true
-          git push origin backups || true
+          git commit -m "Auto backup: $(date -Iseconds)" || echo "No changes to commit"
+          
+          # Push
+          git push origin backups || echo "Push failed, but continuing..."
       
       # ============================================
       # 📊 SERVER STATS
@@ -296,17 +318,4 @@ jobs:
           echo "📁 Server folder size: $(du -sh server/ | cut -f1)"
           echo "📁 Backups size: $(du -sh backups/ | cut -f1)"
           echo "📂 Total plugins: $(ls -1 server/plugins/ 2>/dev/null | wc -l)"
-          echo "👥 Players online: $(ls server/world/playerdata 2>/dev/null | wc -l || echo 0)"
-          
-          if command -v tailscale &> /dev/null; then
-            echo "🔗 Tailscale: CONNECTED"
-            echo "🔗 Tailscale IP: $(tailscale ip 2>/dev/null || echo 'Unknown')"
-          else
-            echo "🔗 Tailscale: NOT INSTALLED"
-          fi
-          
-          echo "========================================="
-          echo "🔗 To connect to server:"
-          echo "   IP: $(tailscale ip 2>/dev/null || echo 'localhost')"
-          echo "   Port: 25565"
           echo "========================================="
