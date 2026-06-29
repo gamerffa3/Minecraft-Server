@@ -24,13 +24,20 @@ on:
           - 'yes'
           - 'no'
         default: 'yes'
+      generate_share_link:
+        description: 'Generate Tailscale share link for players?'
+        type: choice
+        options:
+          - 'yes'
+          - 'no'
+        default: 'yes'
 
 # ============================================
 # ✅ PERMISSIONS - TAILSCALE KE LIYE
 # ============================================
 permissions:
   id-token: write
-  contents: read
+  contents: write
 
 jobs:
   server:
@@ -63,6 +70,33 @@ jobs:
           TAILSCALE_IP=$(tailscale ip 2>/dev/null || echo "Unknown")
           echo "TAILSCALE_IP=$TAILSCALE_IP" >> $GITHUB_ENV
           echo "✅ Tailscale IP: $TAILSCALE_IP"
+      
+      # ============================================
+      # 🔗 GENERATE TAILSCALE SHARE LINK
+      # ============================================
+      - name: Generate Tailscale Share Link
+        if: github.event.inputs.generate_share_link == 'yes' && github.event.inputs.tailscale_connect == 'yes'
+        run: |
+          echo "========================================="
+          echo "🔗 TAILSCALE SHARE LINK FOR PLAYERS"
+          echo "========================================="
+          echo ""
+          echo "📝 Share this link with players:"
+          echo ""
+          echo "👉 https://login.tailscale.com/admin/machines"
+          echo ""
+          echo "========================================="
+          echo "📋 STEPS FOR PLAYERS:"
+          echo "========================================="
+          echo "1. Install Tailscale: https://tailscale.com/download"
+          echo "2. Click the share link above"
+          echo "3. Login with their Tailscale account"
+          echo "4. Open Minecraft and connect to:"
+          echo "   minecraft-server.tailscale.net:25565"
+          echo "========================================="
+          
+          # Save link info for later
+          echo "SHARE_LINK_GENERATED=true" >> $GITHUB_ENV
       
       # ============================================
       # 🗑️ RESET DATA (if requested)
@@ -145,7 +179,7 @@ jobs:
           allow-end=true
           level-name=world
           level-type=default
-          motd=Welcome to Advanced Paper Server! | 🔗 $TAILSCALE_IP
+          motd=Welcome to Advanced Paper Server! | 🔗 minecraft-server.tailscale.net
           enable-query=true
           enable-rcon=true
           rcon-password=${{ secrets.RCON_PASSWORD }}
@@ -154,8 +188,8 @@ jobs:
           network-compression-threshold=256
           EOF
           
-          # Create server-icon.png
-          echo "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAI0lEQVR4nO3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAAG4NFeAAAW2v83YAAAAASUVORK5CYII=" | base64 -d > server-icon.png
+          # Create valid server-icon.png
+          curl -s -o server-icon.png https://cdn-icons-png.flaticon.com/512/6596/6596681.png || echo "No icon"
           
           echo "========================================="
           echo "📦 SERVER SETUP COMPLETE"
@@ -176,9 +210,18 @@ jobs:
           echo "========================================="
           echo "🎮 SERVER CONNECTION INFO"
           echo "========================================="
+          echo ""
           echo "🔗 MagicDNS: minecraft-server.tailscale.net"
           echo "🔌 Port: 25565"
           echo "📡 IP: $(tailscale ip 2>/dev/null || echo 'Unknown')"
+          echo ""
+          echo "========================================="
+          echo "📝 CONNECT IN MINECRAFT:"
+          echo "   minecraft-server.tailscale.net:25565"
+          echo "========================================="
+          echo ""
+          echo "📤 SHARE THIS LINK WITH PLAYERS:"
+          echo "   https://login.tailscale.com/admin/machines"
           echo "========================================="
           
           # Start Paper server
@@ -202,6 +245,18 @@ jobs:
           
           cp "backups/$BACKUP_NAME.zip" "backups/latest.zip"
           
+          # Create metadata
+          cat > backups/metadata.json << EOF
+          {
+            "backup_name": "$BACKUP_NAME",
+            "timestamp": "$(date -Iseconds)",
+            "server_mode": "${{ github.event.inputs.server_mode }}",
+            "tailscale_ip": "${TAILSCALE_IP:-Unknown}",
+            "magic_dns": "minecraft-server.tailscale.net",
+            "port": 25565
+          }
+          EOF
+          
           echo "✅ Backup created: $BACKUP_NAME.zip"
       
       # ============================================
@@ -212,7 +267,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: minecraft-backup
-          path: backups/latest.zip
+          path: |
+            backups/latest.zip
+            backups/metadata.json
           retention-days: 90
       
       - name: Upload All Backups
@@ -235,6 +292,7 @@ jobs:
           git config user.email "actions@github.com"
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
           
+          # Create or switch to backups branch
           git checkout -b backups || git checkout backups
           
           mkdir -p backup-repo
@@ -256,4 +314,5 @@ jobs:
           echo "📁 Server: $(du -sh server/ 2>/dev/null | cut -f1 || echo 'N/A')"
           echo "📁 Backups: $(du -sh backups/ 2>/dev/null | cut -f1 || echo 'N/A')"
           echo "📂 Plugins: $(ls -1 server/plugins/ 2>/dev/null | wc -l)"
+          echo "🔗 MagicDNS: minecraft-server.tailscale.net"
           echo "========================================="
