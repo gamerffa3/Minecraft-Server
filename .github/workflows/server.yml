@@ -1,1 +1,312 @@
+name: Advanced Paper Server
 
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+    inputs:
+      reset_data:
+        description: 'Reset all data (world, plugins, config)'
+        type: boolean
+        default: false
+      server_mode:
+        description: 'Server mode'
+        type: choice
+        options:
+          - survival
+          - creative
+          - adventure
+        default: survival
+      backup_on_stop:
+        description: 'Create backup on stop'
+        type: boolean
+        default: true
+
+jobs:
+  server:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Setup Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+      
+      # ============================================
+      # 🔗 TAILSCALE SETUP
+      # ============================================
+      - name: Setup Tailscale
+        run: |
+          echo "🔗 Installing Tailscale..."
+          curl -fsSL https://tailscale.com/install.sh | sh
+          
+          if [ -n "${{ secrets.TAILSCALE_AUTH_KEY }}" ]; then
+            echo "🔗 Connecting to Tailscale..."
+            sudo tailscale up --auth-key=${{ secrets.TAILSCALE_AUTH_KEY }} --accept-routes
+            TAILSCALE_IP=$(tailscale ip)
+            echo "✅ Tailscale connected! IP: $TAILSCALE_IP"
+          else
+            echo "⚠️ TAILSCALE_AUTH_KEY not set. Skipping Tailscale setup."
+          fi
+      
+      # ============================================
+      # 🗑️ RESET DATA (if requested)
+      # ============================================
+      - name: Reset Data
+        if: github.event.inputs.reset_data == 'true'
+        run: |
+          echo "🗑️ Resetting all server data..."
+          rm -rf server/
+          rm -rf backups/
+          mkdir -p backups
+          echo "✅ Data reset complete!"
+      
+      # ============================================
+      # 📥 DOWNLOAD LATEST BACKUP
+      # ============================================
+      - name: Download Latest Backup
+        if: github.event.inputs.reset_data != 'true'
+        uses: actions/download-artifact@v4
+        with:
+          name: minecraft-backup
+          path: server/
+        continue-on-error: true
+      
+      # ============================================
+      # 🛠️ COMPLETE SERVER SETUP
+      # ============================================
+      - name: Complete Server Setup
+        run: |
+          mkdir -p server
+          cd server
+          
+          # Create all folders
+          mkdir -p plugins
+          mkdir -p world
+          mkdir -p world_nether
+          mkdir -p world_the_end
+          mkdir -p logs
+          mkdir -p config
+          
+          # Copy uploaded plugins
+          echo "📦 Copying plugins..."
+          cp ../*.jar plugins/ 2>/dev/null || true
+          
+          # Download Playit Agent (optional - for public access)
+          echo "📥 Downloading Playit Agent..."
+          wget -q https://playit.gg/download/playit-linux-amd64 -O playit-agent
+          chmod +x playit-agent
+          
+          # Download Paper
+          if [ ! -f "paper-1.21.4-72.jar" ]; then
+            echo "📥 Downloading Paper..."
+            wget -q https://api.papermc.io/v2/projects/paper/versions/1.21.4/builds/72/downloads/paper-1.21.4-72.jar
+          fi
+          
+          # Accept EULA
+          echo "eula=true" > eula.txt
+          
+          # Set gamemode based on input
+          if [ "${{ github.event.inputs.server_mode }}" == "creative" ]; then
+            GM=1
+          elif [ "${{ github.event.inputs.server_mode }}" == "adventure" ]; then
+            GM=2
+          else
+            GM=0
+          fi
+          
+          # Complete server.properties with Tailscale IP
+          TAILSCALE_IP=$(tailscale ip 2>/dev/null || echo "localhost")
+          
+          cat > server.properties << EOF
+          # Minecraft server properties
+          server-port=25565
+          max-players=50
+          view-distance=12
+          simulation-distance=8
+          gamemode=$GM
+          difficulty=3
+          spawn-protection=16
+          online-mode=false
+          force-gamemode=false
+          allow-flight=true
+          allow-nether=true
+          allow-end=true
+          level-name=world
+          level-type=default
+          motd=Welcome to Advanced Paper Server! | Tailscale: $TAILSCALE_IP
+          enable-query=true
+          enable-rcon=true
+          rcon-password=${{ secrets.RCON_PASSWORD }}
+          rcon-port=25575
+          max-tick-time=60000
+          network-compression-threshold=256
+          EOF
+          
+          # Create server-icon.png
+          echo "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAI0lEQVR4nO3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAAG4NFeAAAW2v83YAAAAASUVORK5CYII=" | base64 -d > server-icon.png
+          
+          echo "========================================="
+          echo "📦 SERVER SETUP COMPLETE"
+          echo "========================================="
+          echo "🎮 Gamemode: ${{ github.event.inputs.server_mode }}"
+          echo "📂 Plugins: $(ls plugins/ | wc -l) files"
+          echo "🔗 Tailscale IP: $TAILSCALE_IP"
+          echo "========================================="
+      
+      # ============================================
+      # 🚀 RUN SERVER WITH TAILSCALE
+      # ============================================
+      - name: Run Server
+        run: |
+          cd server
+          
+          # Start Playit agent (if secret exists)
+          if [ -n "${{ secrets.PLAYIT_SECRET }}" ]; then
+            echo "🚀 Starting Playit agent..."
+            ./playit-agent --secret ${{ secrets.PLAYIT_SECRET }} &
+          else
+            echo "🚀 Playit agent (claim required)..."
+            ./playit-agent &
+          fi
+          
+          sleep 5
+          
+          # Show Tailscale status
+          if command -v tailscale &> /dev/null; then
+            echo "🔗 Tailscale Status:"
+            tailscale status
+            echo "🔗 Tailscale IP: $(tailscale ip)"
+          fi
+          
+          # Health check thread
+          (
+            while true; do
+              sleep 300  # Check every 5 minutes
+              echo "💚 Server health check: $(date)"
+              echo "📊 Memory: $(free -h | grep Mem | awk '{print $3 "/" $2}')"
+              echo "📊 CPU: $(top -bn1 | grep "Cpu(s)" | awk '{print $2 "%"}')"
+              echo "🔗 Tailscale: $(tailscale status 2>/dev/null | head -1 || echo 'Not connected')"
+            done
+          ) &
+          
+          # Start Paper server
+          echo "🚀 Starting Paper server..."
+          echo "🔗 Connect using Tailscale IP: $(tailscale ip 2>/dev/null || echo 'localhost'):25565"
+          java -Djava.net.preferIPv4Stack=true -Xmx8G -Xms4G -jar paper-1.21.4-72.jar nogui
+      
+      # ============================================
+      # 💾 AUTO BACKUP WITH DATE-TIME
+      # ============================================
+      - name: Auto Backup
+        if: always()
+        run: |
+          BACKUP_NAME="backup-$(date +'%Y-%m-%d_%H-%M-%S')"
+          echo "📦 Creating backup: $BACKUP_NAME"
+          
+          mkdir -p backups
+          
+          cd server
+          zip -r "../backups/$BACKUP_NAME.zip" . -x "*.jar" "*.log" "*.gz" "*.tmp" "cache/*" 2>/dev/null || true
+          cd ..
+          
+          # Copy to latest
+          cp "backups/$BACKUP_NAME.zip" "backups/latest.zip"
+          
+          # Create metadata
+          BACKUP_SIZE=$(du -h backups/$BACKUP_NAME.zip | cut -f1)
+          WORLD_SIZE=$(du -sh server/world 2>/dev/null | cut -f1 || echo "0")
+          PLAYER_COUNT=$(ls server/world/playerdata 2>/dev/null | wc -l || echo "0")
+          
+          cat > backups/metadata.json << EOF
+          {
+            "backup_name": "$BACKUP_NAME",
+            "timestamp": "$(date -Iseconds)",
+            "backup_size": "$BACKUP_SIZE",
+            "world_size": "$WORLD_SIZE",
+            "player_count": $PLAYER_COUNT,
+            "server_mode": "${{ github.event.inputs.server_mode }}",
+            "tailscale_ip": "$(tailscale ip 2>/dev/null || echo 'localhost')"
+          }
+          EOF
+          
+          echo "✅ Backup created: $BACKUP_NAME.zip"
+          echo "📂 Backup size: $BACKUP_SIZE"
+          echo "📊 Players: $PLAYER_COUNT"
+          echo "📊 World size: $WORLD_SIZE"
+      
+      # ============================================
+      # 📤 UPLOAD BACKUPS TO GITHUB
+      # ============================================
+      - name: Upload Latest Backup
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-backup
+          path: |
+            backups/latest.zip
+            backups/metadata.json
+          retention-days: 90
+      
+      - name: Upload All Backups
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: minecraft-backups-${{ github.run_id }}
+          path: backups/
+          retention-days: 30
+      
+      # ============================================
+      # 📤 UPLOAD TO BACKUP REPOSITORY
+      # ============================================
+      - name: Push Backup to Repository
+        if: always()
+        run: |
+          echo "📤 Pushing backups to repository..."
+          
+          # Configure git
+          git config user.name "GitHub Actions Bot"
+          git config user.email "actions@github.com"
+          
+          # Create backup branch
+          git checkout -b backups || git checkout backups
+          
+          # Copy backups to repo
+          mkdir -p backup-repo
+          cp -r backups/* backup-repo/ 2>/dev/null || true
+          
+          # Push to backup branch
+          git add backup-repo/
+          git commit -m "Auto backup: $(date -Iseconds)" || true
+          git push origin backups || true
+      
+      # ============================================
+      # 📊 SERVER STATS
+      # ============================================
+      - name: Server Stats
+        if: always()
+        run: |
+          echo "========================================="
+          echo "📊 SERVER STATS"
+          echo "========================================="
+          echo "📁 Server folder size: $(du -sh server/ | cut -f1)"
+          echo "📁 Backups size: $(du -sh backups/ | cut -f1)"
+          echo "📂 Total plugins: $(ls -1 server/plugins/ 2>/dev/null | wc -l)"
+          echo "👥 Players online: $(ls server/world/playerdata 2>/dev/null | wc -l || echo 0)"
+          
+          if command -v tailscale &> /dev/null; then
+            echo "🔗 Tailscale: CONNECTED"
+            echo "🔗 Tailscale IP: $(tailscale ip 2>/dev/null || echo 'Unknown')"
+          else
+            echo "🔗 Tailscale: NOT INSTALLED"
+          fi
+          
+          echo "========================================="
+          echo "🔗 To connect to server:"
+          echo "   IP: $(tailscale ip 2>/dev/null || echo 'localhost')"
+          echo "   Port: 25565"
+          echo "========================================="
