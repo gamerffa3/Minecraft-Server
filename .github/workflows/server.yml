@@ -24,11 +24,13 @@ on:
           - 'yes'
           - 'no'
         default: 'yes'
-      tailscale_auth_key:
-        description: 'Tailscale Auth Key (tskey-auth-xxxxx)'
-        type: string
-        required: false
-        default: ''
+
+# ============================================
+# ✅ PERMISSIONS - TAILSCALE KE LIYE
+# ============================================
+permissions:
+  id-token: write
+  contents: read
 
 jobs:
   server:
@@ -45,43 +47,22 @@ jobs:
           java-version: '21'
       
       # ============================================
-      # 🔗 TAILSCALE SETUP WITH OPTION
+      # 🔗 TAILSCALE - OFFICIAL ACTION
       # ============================================
-      - name: Setup Tailscale
+      - name: Tailscale
+        if: github.event.inputs.tailscale_connect == 'yes'
+        uses: tailscale/github-action@v4
+        with:
+          authkey: ${{ secrets.TAILSCALE_AUTH_KEY }}
+          tags: tag:ci
+          hostname: minecraft-server
+
+      - name: Get Tailscale IP
         if: github.event.inputs.tailscale_connect == 'yes'
         run: |
-          echo "🔗 Installing Tailscale..."
-          curl -fsSL https://tailscale.com/install.sh | sh
-          
-          # Use provided auth key or try secrets
-          AUTH_KEY="${{ github.event.inputs.tailscale_auth_key }}"
-          if [ -z "$AUTH_KEY" ]; then
-            AUTH_KEY="${{ secrets.TAILSCALE_AUTH_KEY }}"
-          fi
-          
-          if [ -n "$AUTH_KEY" ]; then
-            echo "🔗 Connecting to Tailscale with auth key..."
-            sudo tailscale up --auth-key="$AUTH_KEY" --accept-routes --accept-dns
-            TAILSCALE_IP=$(tailscale ip 2>/dev/null || echo "Unknown")
-            echo "✅ Tailscale connected! IP: $TAILSCALE_IP"
-            
-            # Save IP for later steps
-            echo "TAILSCALE_IP=$TAILSCALE_IP" >> $GITHUB_ENV
-          else
-            echo "⚠️ No Tailscale auth key provided!"
-            echo ""
-            echo "========================================="
-            echo "🔗 HOW TO GET TAILSCALE AUTH KEY:"
-            echo "========================================="
-            echo "1. Go to: https://login.tailscale.com/admin/settings/keys"
-            echo "2. Click 'Generate auth key'"
-            echo "3. Copy the key (starts with 'tskey-auth-')"
-            echo "4. Add it as a GitHub Secret:"
-            echo "   Settings → Secrets → TAILSCALE_AUTH_KEY"
-            echo "========================================="
-            echo ""
-            exit 1
-          fi
+          TAILSCALE_IP=$(tailscale ip 2>/dev/null || echo "Unknown")
+          echo "TAILSCALE_IP=$TAILSCALE_IP" >> $GITHUB_ENV
+          echo "✅ Tailscale IP: $TAILSCALE_IP"
       
       # ============================================
       # 🗑️ RESET DATA (if requested)
@@ -125,11 +106,6 @@ jobs:
           # Copy uploaded plugins
           echo "📦 Copying plugins..."
           cp ../*.jar plugins/ 2>/dev/null || true
-          
-          # Download Playit Agent (optional)
-          echo "📥 Downloading Playit Agent..."
-          wget -q https://playit.gg/download/playit-linux-amd64 -O playit-agent || true
-          chmod +x playit-agent 2>/dev/null || true
           
           # Download Paper
           if [ ! -f "paper-1.21.4-72.jar" ]; then
@@ -181,24 +157,6 @@ jobs:
           # Create server-icon.png
           echo "iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAYAAACqaXHeAAAAI0lEQVR4nO3BAQ0AAADCoPdPbQ43oAAAAAAAAAAAAG4NFeAAAW2v83YAAAAASUVORK5CYII=" | base64 -d > server-icon.png
           
-          # Create connection info file
-          cat > CONNECTION_INFO.txt << EOF
-          =========================================
-          🎮 MINECRAFT SERVER CONNECTION INFO
-          =========================================
-          🌐 Server IP: $TAILSCALE_IP
-          🔌 Port: 25565
-          🎮 Mode: ${{ github.event.inputs.server_mode }}
-          📂 Plugins: $(ls plugins/ | wc -l)
-          =========================================
-          🔗 To connect:
-          1. Open Minecraft
-          2. Add Server
-          3. IP: $TAILSCALE_IP
-          4. Port: 25565
-          =========================================
-          EOF
-          
           echo "========================================="
           echo "📦 SERVER SETUP COMPLETE"
           echo "========================================="
@@ -208,32 +166,20 @@ jobs:
           echo "========================================="
       
       # ============================================
-      # 🚀 RUN SERVER WITH TAILSCALE
+      # 🚀 RUN SERVER
       # ============================================
       - name: Run Server
         run: |
           cd server
           
-          # Start Playit agent (if exists)
-          if [ -f "./playit-agent" ]; then
-            echo "🚀 Starting Playit agent..."
-            ./playit-agent &
-          fi
-          
-          sleep 3
-          
           # Show connection info
-          cat CONNECTION_INFO.txt
-          
-          # Health check thread
-          (
-            while true; do
-              sleep 300
-              echo "💚 Server health check: $(date)"
-              echo "📊 Memory: $(free -h | grep Mem | awk '{print $3 "/" $2}')"
-              echo "📊 CPU: $(top -bn1 | grep "Cpu(s)" | awk '{print $2 "%"}')"
-            done
-          ) &
+          echo "========================================="
+          echo "🎮 SERVER CONNECTION INFO"
+          echo "========================================="
+          echo "🔗 MagicDNS: minecraft-server.tailscale.net"
+          echo "🔌 Port: 25565"
+          echo "📡 IP: $(tailscale ip 2>/dev/null || echo 'Unknown')"
+          echo "========================================="
           
           # Start Paper server
           echo "🚀 Starting Paper server..."
@@ -278,33 +224,25 @@ jobs:
           retention-days: 30
       
       # ============================================
-      # 📤 PUSH TO BACKUP BRANCH (Fixed Permission)
+      # 📤 PUSH TO BACKUP BRANCH
       # ============================================
       - name: Push Backup to Repository
         if: always()
         run: |
           echo "📤 Pushing backups to repository..."
           
-          # Configure git with token
           git config user.name "GitHub Actions Bot"
           git config user.email "actions@github.com"
-          
-          # Use GITHUB_TOKEN for authentication
           git remote set-url origin https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}
           
-          # Create or switch to backups branch
           git checkout -b backups || git checkout backups
           
-          # Copy backups
           mkdir -p backup-repo
           cp -r backups/* backup-repo/ 2>/dev/null || true
           
-          # Add and commit
           git add backup-repo/
-          git commit -m "Auto backup: $(date -Iseconds)" || echo "No changes to commit"
-          
-          # Push
-          git push origin backups || echo "Push failed, but continuing..."
+          git commit -m "Auto backup: $(date -Iseconds)" || echo "No changes"
+          git push origin backups || echo "Push failed"
       
       # ============================================
       # 📊 SERVER STATS
@@ -315,7 +253,7 @@ jobs:
           echo "========================================="
           echo "📊 SERVER STATS"
           echo "========================================="
-          echo "📁 Server folder size: $(du -sh server/ | cut -f1)"
-          echo "📁 Backups size: $(du -sh backups/ | cut -f1)"
-          echo "📂 Total plugins: $(ls -1 server/plugins/ 2>/dev/null | wc -l)"
+          echo "📁 Server: $(du -sh server/ 2>/dev/null | cut -f1 || echo 'N/A')"
+          echo "📁 Backups: $(du -sh backups/ 2>/dev/null | cut -f1 || echo 'N/A')"
+          echo "📂 Plugins: $(ls -1 server/plugins/ 2>/dev/null | wc -l)"
           echo "========================================="
